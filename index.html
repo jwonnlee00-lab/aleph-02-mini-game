@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>범피의 간식 시간 (2-Back)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Courier New', Courier, monospace; }
+    body { background-color: #222; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; }
+    #game-container { width: 450px; max-width: calc(100vw - 24px); background: #333; border: 4px solid #fff; border-radius: 8px; padding: 20px; text-align: center; position: relative; }
+    h1 { font-size: 20px; margin-bottom: 10px; color: #ffcc00; }
+    .hud { display: flex; justify-content: space-between; margin-bottom: 15px; font-size: 16px; font-weight: bold; background: #111; padding: 10px; border-radius: 4px; }
+    .hud-item span { color: #00ffcc; }
+    #display-area { height: 180px; background-color: #1a1a1a; border: 2px dashed #666; border-radius: 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 15px; }
+    #snack-icon { font-size: 70px; margin-bottom: 5px; }
+    #snack-name { font-size: 18px; font-weight: bold; color: #ff9900; }
+    #feedback { height: 24px; font-size: 18px; font-weight: bold; margin-bottom: 15px; }
+    .feedback-correct { color: #00ff00; }
+    .feedback-wrong { color: #ff3333; }
+    .btn-space { width: 100%; padding: 15px; font-size: 16px; font-weight: bold; background: #ffcc00; color: #000; border: none; border-radius: 4px; cursor: pointer; }
+    .btn-space:active { background: #e6b800; }
+    .guide-text { font-size: 12px; color: #aaa; margin-top: 8px; }
+    .overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 4px; padding: 20px; }
+    .overlay h2 { font-size: 24px; color: #ffcc00; margin-bottom: 15px; }
+    .overlay p { font-size: 14px; margin-bottom: 10px; line-height: 1.4; }
+    .btn-start { margin-top: 15px; padding: 10px 20px; font-size: 16px; background: #00ffcc; color: #000; border: none; font-weight: bold; border-radius: 4px; cursor: pointer; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+<div id="game-container">
+  <h1>🍿 범피의 간식 시간 (2-Back)</h1>
+  <div class="hud">
+    <div class="hud-item">단계: <span id="stage-text">워밍업</span></div>
+    <div class="hud-item">시간: <span id="time-text">--</span></div>
+    <div class="hud-item">점수: <span id="score-text">0</span></div>
+  </div>
+  <div id="display-area">
+    <div id="snack-icon">❓</div>
+    <div id="snack-name">준비 중...</div>
+  </div>
+  <div id="feedback"></div>
+  <button class="btn-space" id="btn-match" onclick="handleInput()">Space / 버튼 클릭 (2개 전과 일치!)</button>
+  <div class="guide-text">현재 나온 간식이 <b>2개 전에 나왔던 간식</b>과 같으면 누르세요!</div>
+  <div id="start-overlay" class="overlay">
+    <h2>게임 시작</h2>
+    <p><b>[2-Back 규칙]</b><br>지금 간식이 <b>2칸 전 간식</b>과 같으면 입력!</p>
+    <p>1단계: <b>워밍업</b> (시간정지, 3연속 성공 시 본게임)<br>2단계: <b>본게임</b> (60초 타임어택, 정답 +100점/+3초, 오답 -5초)</p>
+    <button class="btn-start" onclick="startGame()">GAME START</button>
+  </div>
+  <div id="result-overlay" class="overlay hidden">
+    <h2 id="result-title">게임 종료</h2>
+    <p id="result-desc">최종 점수를 확인하세요.</p>
+    <p>최종 점수: <span id="final-score" style="color:#00ffcc; font-size:20px; font-weight:bold;">0</span>점</p>
+    <button class="btn-start" onclick="restartGame()">다시 시작 (Restart)</button>
+  </div>
+</div>
+<script>
+  const WARMUP_SNACKS = [
+    { name: '딸기', icon: '🍓' },
+    { name: '컵케이크', icon: '🧁' },
+    { name: '체리', icon: '🍒' },
+    { name: '도넛', icon: '🍩' }
+  ];
+
+  const MAIN_SNACKS = [
+    { name: '딸기', icon: '🍓' },
+    { name: '컵케이크', icon: '🧁' },
+    { name: '체리', icon: '🍒' },
+    { name: '도넛', icon: '🍩' },
+    { name: '콜라', icon: '🥤' }
+  ];
+
+  let currentStage = 'WARMUP';
+  let history = [];
+  let score = 0;
+  let timeLeft = 60.0;
+  let gameTimer = null;
+  let nodeTimer = null;
+  let warmupConsecutive = 0;
+  let hasInputCurrentNode = false;
+  let isGameRunning = false;
+
+  const N_BACK = 2;
+
+  const stageText = document.getElementById('stage-text');
+  const timeText = document.getElementById('time-text');
+  const scoreText = document.getElementById('score-text');
+  const snackIcon = document.getElementById('snack-icon');
+  const snackName = document.getElementById('snack-name');
+  const feedback = document.getElementById('feedback');
+  const startOverlay = document.getElementById('start-overlay');
+  const resultOverlay = document.getElementById('result-overlay');
+  const resultTitle = document.getElementById('result-title');
+  const resultDesc = document.getElementById('result-desc');
+  const finalScore = document.getElementById('final-score');
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      handleInput();
+    }
+  });
+
+  function startGame() {
+    startOverlay.classList.add('hidden');
+    resultOverlay.classList.add('hidden');
+    currentStage = 'WARMUP';
+    history = [];
+    score = 0;
+    warmupConsecutive = 0;
+    timeLeft = 60.0;
+    isGameRunning = true;
+    stageText.innerText = '워밍업';
+    timeText.innerText = '정지 (연습)';
+    scoreText.innerText = score;
+    nextSnackNode();
+  }
+
+  function nextSnackNode() {
+    if (!isGameRunning) return;
+
+    if (currentStage === 'MAIN' && history.length >= N_BACK + 1 && !hasInputCurrentNode) {
+      const prevIsMatch = history[history.length - 1] === history[history.length - 1 - N_BACK];
+      if (prevIsMatch) {
+        applyPenalty('놓침 (-5초)');
+      }
+    }
+
+    hasInputCurrentNode = false;
+
+    const pool = (currentStage === 'WARMUP') ? WARMUP_SNACKS : MAIN_SNACKS;
+    let nextSnack;
+
+    if (history.length >= N_BACK && Math.random() < 0.35) {
+      nextSnack = history[history.length - N_BACK];
+    } else {
+      nextSnack = pool[Math.floor(Math.random() * pool.length)];
+    }
+
+    history.push(nextSnack);
+    snackIcon.innerText = nextSnack.icon;
+    snackName.innerText = nextSnack.name;
+
+    if (currentStage === 'MAIN') {
+      clearTimeout(nodeTimer);
+      nodeTimer = setTimeout(nextSnackNode, 1600);
+    }
+  }
+
+  function handleInput() {
+    if (!isGameRunning || hasInputCurrentNode) return;
+
+    if (history.length <= N_BACK) {
+      showFeedback('기억하는 중... (2개 전 비교)', 'feedback-wrong');
+      return;
+    }
+
+    hasInputCurrentNode = true;
+
+    const current = history[history.length - 1];
+    const target = history[history.length - 1 - N_BACK];
+    const isCorrectMatch = (current.name === target.name);
+
+    if (isCorrectMatch) {
+      score += 100;
+      scoreText.innerText = score;
+
+      if (currentStage === 'WARMUP') {
+        warmupConsecutive++;
+        showFeedback('정답! (' + warmupConsecutive + '/3 연속)', 'feedback-correct');
+
+        if (warmupConsecutive >= 3) {
+          setTimeout(startMainGame, 800);
+        } else {
+          setTimeout(nextSnackNode, 800);
+        }
+      } else {
+        timeLeft += 3.0;
+        showFeedback('정답! +100점 / +3초', 'feedback-correct');
+      }
+    } else {
+      if (currentStage === 'WARMUP') {
+        warmupConsecutive = 0;
+        showFeedback('불일치! 연속 성공 초기화', 'feedback-wrong');
+        setTimeout(nextSnackNode, 800);
+      } else {
+        applyPenalty('오답! -5초');
+      }
+    }
+  }
+
+  function applyPenalty(msg) {
+    timeLeft -= 5.0;
+    if (timeLeft < 0) timeLeft = 0;
+
+    timeText.innerText = timeLeft.toFixed(1) + 's';
+    showFeedback(msg, 'feedback-wrong');
+
+    if (timeLeft <= 0) {
+      endGame();
+    }
+  }
+
+  function startMainGame() {
+    currentStage = 'MAIN';
+    stageText.innerText = '본게임';
+    showFeedback('🔥 본게임 시작! 60초 타임어택', 'feedback-correct');
+
+    gameTimer = setInterval(() => {
+      timeLeft -= 0.1;
+
+      if (timeLeft <= 0) {
+        timeLeft = 0;
+        endGame();
+      }
+
+      timeText.innerText = timeLeft.toFixed(1) + 's';
+    }, 100);
+
+    nextSnackNode();
+  }
+
+  function showFeedback(text, className) {
+    feedback.innerText = text;
+    feedback.className = className;
+
+    setTimeout(() => {
+      if (feedback.innerText === text) feedback.innerText = '';
+    }, 1200);
+  }
+
+  function endGame() {
+    isGameRunning = false;
+    clearInterval(gameTimer);
+    clearTimeout(nodeTimer);
+
+    finalScore.innerText = score;
+    resultOverlay.classList.remove('hidden');
+
+    if (score >= 1000) {
+      resultTitle.innerText = '🎉 SUCCESS (승리)';
+      resultDesc.innerText = '축하합니다! 목표 점수를 달성했습니다.';
+    } else {
+      resultTitle.innerText = '💥 GAME OVER (패배)';
+      resultDesc.innerText = '아쉽습니다. 2-Back 연속 인지를 더 훈련해보세요!';
+    }
+  }
+
+  function restartGame() {
+    startGame();
+  }
+</script>
+</body>
+</html>
